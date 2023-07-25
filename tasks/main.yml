@@ -1,0 +1,82 @@
+- name: install certbot and plugins
+  apt:
+    update_cache: true
+    state: present
+    name: "{{ item }}"
+  with_items:
+    - certbot
+    - python3-certbot-dns-gandi
+- name: create folder
+  file:
+    path: /opt/certbot/plugins/settings/ 
+    state: directory
+    mode: '0755'        
+- name: copy certbot settings
+  copy:
+    src: gandi.ini
+    dest: /opt/certbot/plugins/settings/gandi.ini
+- name: verify if certs is present
+  stat:
+    path: "/etc/letsencrypt/live/{{ item }}/fullchain.pem"
+    follow: true
+  with_items: "{{ cert_list }}"
+  register: stat_result
+- name: show var
+  debug:
+    var: stat_result 
+- name: Filter out missing certs
+  set_fact:
+    missing_certs: "{{ stat_result | json_query('results[? !(stat.exists)]') }}"
+- name: show fact
+  debug:
+    var: missing_certs
+- name: Test whether that certificate is valid in two weeks
+  community.crypto.x509_certificate_info:
+    path: "/etc/letsencrypt/live/{{ item }}/fullchain.pem" 
+    valid_at:
+      twoweeks: "+2w"
+  when: missing_certs|length == 0
+  with_items: "{{ cert_list }}"
+  register: cert_info 
+- name: Filter out valid certs
+  set_fact:
+    outdated_certs: "{{ cert_info | json_query('results[? !(valid_at.twoweeks)]') }}"
+  when: missing_certs|length == 0
+- block:
+    - name: Check that all certificates are valid
+      assert:
+        that:
+          - outdated_certs | count == 0        
+      when: missing_certs|length == 0
+- name: get certificates
+  shell: certbot certonly -n --authenticator dns-gandi --dns-gandi-credentials /opt/certbot/plugins/settings/gandi.ini -d "{{ item }}" --agree-tos --no-eff-email --email "{{ myownemail }}"
+  with_items: "{{ cert_list }}"
+  when: outdated_certs | count > 0 or missing_certs|length > 0 or outdated_certs is undefined
+- name: change certificate ownership
+  file: 
+    path: "/etc/letsencrypt/live/{{ item.0 }}/{{ item.1 }}"
+    group: "{{ certificate_owner }}"
+  when: certificate_owner is defined
+  with_nested:
+    - "{{ cert_list }}"
+    - ['fullchain.pem','privkey.pem']   
+- name: change symlink owner
+  file: 
+    path: "/etc/letsencrypt/live/{{ item.0 }}/{{ item.1 }}"
+    group: "{{ certificate_owner }}"
+    follow: false
+  when: certificate_owner is defined
+  with_nested:
+    - "{{ cert_list }}"
+    - ['fullchain.pem','privkey.pem']   
+- name: change directory perms
+  file: 
+    path: "/etc/letsencrypt/{{ item }}"
+    group: "{{ certificate_owner }}"
+    state: directory
+    mode: 0755
+    follow: false
+  when: certificate_owner is defined
+  with_items:
+    - live
+    - archive   
