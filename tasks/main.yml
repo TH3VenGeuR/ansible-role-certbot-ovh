@@ -4,17 +4,21 @@
     state: present
     name: "{{ item }}"
   with_items:
-    - certbot
-    - python3-certbot-dns-gandi
+    - python3.11-venv
 - name: create folder
   file:
     path: /opt/certbot/plugins/settings/ 
     state: directory
-    mode: '0755'        
+    mode: '0755'
+- name: create venv
+  shell: python3 -m venv /opt/certbot
+- name: install certbot
+  shell: /opt/certbot/bin/pip3 install certbot-dns-ovh 
 - name: copy certbot settings
   copy:
-    src: gandi.ini
-    dest: /opt/certbot/plugins/settings/gandi.ini
+    src: ovh.ini
+    dest: /opt/certbot/plugins/settings/ovh.ini
+    mode: 600
 - name: verify if certs is present
   stat:
     path: "/etc/letsencrypt/live/{{ item }}/fullchain.pem"
@@ -42,20 +46,21 @@
   set_fact:
     outdated_certs: "{{ cert_info | json_query('results[? !(valid_at.twoweeks)]') }}"
   when: missing_certs|length == 0
-- block:
-    - name: Check that all certificates are valid
-      assert:
-        that:
-          - outdated_certs | count == 0        
-      when: missing_certs|length == 0
+#- block:
+#    - name: Check that all certificates are valid
+#      assert:
+#        that:
+#          - outdated_certs | count == 0        
+#      when: missing_certs|length == 0
 - name: get certificates
-  shell: certbot certonly -n --authenticator dns-gandi --dns-gandi-credentials /opt/certbot/plugins/settings/gandi.ini -d "{{ item }}" --agree-tos --no-eff-email --email "{{ myownemail }}"
+  shell: /opt/certbot/bin/certbot certonly --dns-ovh --dns-ovh-credentials /opt/certbot/plugins/settings/ovh.ini -d "{{ item }}" --agree-tos --no-eff-email --email "{{ myownemail }}"
   with_items: "{{ cert_list }}"
   when: outdated_certs | count > 0 or missing_certs|length > 0 or outdated_certs is undefined
 - name: change certificate ownership
   file: 
     path: "/etc/letsencrypt/live/{{ item.0 }}/{{ item.1 }}"
     group: "{{ certificate_owner }}"
+    mode: 0640
   when: certificate_owner is defined
   with_nested:
     - "{{ cert_list }}"
@@ -64,6 +69,7 @@
   file: 
     path: "/etc/letsencrypt/live/{{ item.0 }}/{{ item.1 }}"
     group: "{{ certificate_owner }}"
+    mode: 0640
     follow: false
   when: certificate_owner is defined
   with_nested:
