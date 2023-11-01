@@ -9,7 +9,7 @@
   file:
     path: /opt/certbot/plugins/settings/ 
     state: directory
-    recursive: true
+    recurse: true
     mode: '0755'
 - name: create venv
   shell: python3 -m venv /opt/certbot
